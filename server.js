@@ -3,16 +3,13 @@ const cors = require('cors');
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('node:crypto'); // 👈 Tambahkan require crypto bawaan Node.js
 
 const app = express();
-
-// Koyeb akan otomatis mengisi process.env.PORT
 const PORT = process.env.PORT || 8000;
 
-// Middleware CORS
 app.use(cors());
 
-// Route Utama API
 app.get('/api/playlist', async (req, res) => {
     const { id } = req.query;
 
@@ -26,14 +23,13 @@ app.get('/api/playlist', async (req, res) => {
     let dom = null;
 
     try {
-        // 1. Cek keberadaan file app.js
         const appJsPath = path.join(__dirname, 'app.js');
         if (!fs.existsSync(appJsPath)) {
-            throw new Error('File app.js tidak ditemukan di direktori root server.');
+            throw new Error('File app.js tidak ditemukan di server.');
         }
         const appJsContent = fs.readFileSync(appJsPath, 'utf8');
 
-        // 2. Inisialisasi Virtual DOM dengan origin dremoxa.site
+        // 1. Inisialisasi Virtual DOM
         dom = new JSDOM(`<!DOCTYPE html><html><body></body></html>`, {
             runScripts: 'dangerously',
             url: 'https://dremoxa.site'
@@ -41,25 +37,28 @@ app.get('/api/playlist', async (req, res) => {
 
         const { window } = dom;
 
-        // Ensure Web Crypto API tersedia di Virtual Window
-        if (!window.crypto || !window.crypto.subtle) {
-            window.crypto = globalThis.crypto;
-        }
+        // 2. PASTI-KAN Web Crypto API (termasuk .subtle.digest) terpasang sempurna
+        Object.defineProperty(window, 'crypto', {
+            value: crypto.webcrypto || globalThis.crypto,
+            configurable: true,
+            writable: true
+        });
 
-        // Inject script app.js ke Virtual DOM
+        // 3. Pasang juga fetch bawaan Node ke dalam window JSDOM
+        window.fetch = globalThis.fetch;
+
+        // 4. Inject script app.js ke Virtual DOM
         const scriptEl = window.document.createElement('script');
         scriptEl.textContent = appJsContent;
         window.document.body.appendChild(scriptEl);
 
-        // 3. Pastikan fungsi getPlaylist dari app.js tersedia
         if (typeof window.getPlaylist !== 'function') {
-            throw new Error('Fungsi window.getPlaylist tidak ditemukan pada app.js.');
+            throw new Error('Fungsi window.getPlaylist tidak ditemukan di app.js');
         }
 
-        // 4. Eksekusi dekripsi getPlaylist(id)
+        // 5. Eksekusi dekripsi
         const result = await window.getPlaylist(id);
 
-        // 5. Kirimkan hasil JSON ke client
         return res.json({
             status: true,
             id: id,
@@ -74,19 +73,16 @@ app.get('/api/playlist', async (req, res) => {
             error: error.message
         });
     } finally {
-        // Pembersihan memori agar tidak terjadi memory leak di Koyeb Free Tier
         if (dom && dom.window) {
             dom.window.close();
         }
     }
 });
 
-// Endpoint Cek Health Server
 app.get('/', (req, res) => {
     res.json({ status: true, message: 'Server API Playlist Aktif!' });
 });
 
-// Binding ke 0.0.0.0 wajib untuk Koyeb / Docker Container
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 API Server berjalan pada port ${PORT}`);
 });
