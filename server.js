@@ -15,7 +15,6 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 app.use(cors());
 
 app.get('/api/playlist', async (req, res) => {
-    // Terima parameter kode pendek (contoh: ?id=ZReJmz7rUX)
     const { id: shortCode } = req.query;
 
     if (!shortCode) {
@@ -54,7 +53,6 @@ app.get('/api/playlist', async (req, res) => {
 
         const rawHtml = await pageResponse.text();
 
-        // Tangkap Cookie Session dari response
         const rawCookies = pageResponse.headers.getSetCookie 
             ? pageResponse.headers.getSetCookie().join('; ') 
             : (pageResponse.headers.get('set-cookie') || '');
@@ -81,7 +79,7 @@ app.get('/api/playlist', async (req, res) => {
 
         const { window } = dom;
 
-        // Mocking Fungsi Pengganggu Bawaan Browser
+        // Mocking Fungsi Browser
         window.alert = () => {};
         if (window.location) {
             window.location.reload = () => {};
@@ -114,7 +112,7 @@ app.get('/api/playlist', async (req, res) => {
             writable: true
         });
 
-        // Inject Web Polyfills
+        // Inject Polyfills
         window.Headers = globalThis.Headers;
         window.Request = globalThis.Request;
         window.Response = globalThis.Response;
@@ -143,7 +141,7 @@ app.get('/api/playlist', async (req, res) => {
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
                 'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
                 'X-Requested-With': 'XMLHttpRequest',
-                'Referer': embedUrl, // Referer resmi hasil rekonstruksi
+                'Referer': embedUrl,
                 'Origin': TARGET_HOST,
                 'Cookie': rawCookies,
                 'Sec-Fetch-Dest': 'empty',
@@ -158,14 +156,11 @@ app.get('/api/playlist', async (req, res) => {
             });
         };
 
-        // 7. Inject & Eksekusi app.js
-        const scriptEl = window.document.createElement('script');
-        scriptEl.src = `${TARGET_HOST}/app.js?v=8899`;
-        scriptEl.textContent = appJsContent;
-        window.document.body.appendChild(scriptEl);
+        // 7. Eksekusi app.js langsung di konteks Virtual DOM
+        window.eval(appJsContent);
 
         if (typeof window.getPlaylist !== 'function') {
-            throw new Error('Fungsi window.getPlaylist tidak ditemukan di app.js');
+            throw new Error('Fungsi window.getPlaylist tidak ditemukan setelah mengeksekusi app.js.');
         }
 
         console.log(`⚙️ [STEP 3] Memproses window.getPlaylist('${longId}')...`);
