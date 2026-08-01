@@ -8,19 +8,19 @@ const crypto = require('node:crypto');
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-// Domain target & User-Agent Konsisten
 const TARGET_HOST = 'https://pulvexa.space';
+const FIXED_TOKEN = '5dfbc9b04e576fc6ad1dbe1daf7a';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 app.use(cors());
 
 app.get('/api/playlist', async (req, res) => {
-    const { id } = req.query;
+    const { id: shortCode } = req.query;
 
-    if (!id) {
+    if (!shortCode) {
         return res.status(400).json({ 
             status: false, 
-            message: 'Parameter ?id= wajib diisi' 
+            message: 'Parameter ?id= (kode video) wajib diisi' 
         });
     }
 
@@ -33,16 +33,50 @@ app.get('/api/playlist', async (req, res) => {
         }
         const appJsContent = fs.readFileSync(appJsPath, 'utf8');
 
-        // 1. Inisialisasi Virtual DOM
-        dom = new JSDOM(`<!DOCTYPE html><html><body></body></html>`, {
+        // 1. Rekonstruksi Full Embed URL
+        const embedUrl = `${TARGET_HOST}/embed/${shortCode}?token=${FIXED_TOKEN}`;
+        console.log(`\n🔍 [STEP 1] Rekonstruksi Full Embed URL: ${embedUrl}`);
+
+        // 2. Download HTML Halaman Embed
+        const pageResponse = await globalThis.fetch(embedUrl, {
+            headers: {
+                'User-Agent': USER_AGENT,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+                'Referer': TARGET_HOST + '/'
+            }
+        });
+
+        if (!pageResponse.ok) {
+            throw new Error(`Gagal mengambil halaman embed. Status: ${pageResponse.status}`);
+        }
+
+        const rawHtml = await pageResponse.text();
+
+        const rawCookies = pageResponse.headers.getSetCookie 
+            ? pageResponse.headers.getSetCookie().join('; ') 
+            : (pageResponse.headers.get('set-cookie') || '');
+
+        // 3. Ekstraksi ID Panjang langsung dari pemanggilan getPlaylist(...)
+        const match = rawHtml.match(/getPlaylist\(\s*[`'"]([a-f0-9]{32})[`'"]\s*\)/i);
+        const longId = match ? match[1] : null;
+
+        if (!longId) {
+            throw new Error('Gagal menemukan ID video panjang pada pemanggilan getPlaylist()');
+        }
+
+        console.log(`🔑 [STEP 2] ID Video Panjang Ditemukan: ${longId}`);
+
+        // 4. Inisialisasi JSDOM
+        dom = new JSDOM(rawHtml, {
             runScripts: 'dangerously',
-            url: TARGET_HOST,
+            url: embedUrl,
             pretendToBeVisual: true
         });
 
         const { window } = dom;
 
-        // 2. Mock Navigator
+        // Mock Environment
         Object.defineProperty(window, 'navigator', {
             value: {
                 userAgent: USER_AGENT,
@@ -57,28 +91,18 @@ app.get('/api/playlist', async (req, res) => {
             configurable: true
         });
 
-        // 3. Mock Screen
         Object.defineProperty(window, 'screen', {
-            value: {
-                width: 1920,
-                height: 1080,
-                availWidth: 1920,
-                availHeight: 1040,
-                colorDepth: 24,
-                pixelDepth: 24
-            },
+            value: { width: 1920, height: 1080, availWidth: 1920, availHeight: 1040, colorDepth: 24, pixelDepth: 24 },
             writable: true,
             configurable: true
         });
 
-        // 4. Inject Web Crypto API
         Object.defineProperty(window, 'crypto', {
             value: crypto.webcrypto || globalThis.crypto,
             configurable: true,
             writable: true
         });
 
-        // 5. Inject Polyfills
         window.Headers = globalThis.Headers;
         window.Request = globalThis.Request;
         window.Response = globalThis.Response;
@@ -89,7 +113,7 @@ app.get('/api/playlist', async (req, res) => {
         window.Uint8Array = globalThis.Uint8Array;
         window.ArrayBuffer = globalThis.ArrayBuffer;
 
-        // 6. INTERCEPTOR FETCH DENGAN DEBUG LOGGING MENDETAIL
+        // 5. Interceptor Fetch dengan Referer Full Embed URL
         window.fetch = async function(resource, config = {}) {
             let urlStr = typeof resource === 'string' ? resource : (resource.url || resource.href || String(resource));
 
@@ -100,49 +124,31 @@ app.get('/api/playlist', async (req, res) => {
                 urlStr = TARGET_HOST + urlStr;
             }
 
-            console.log(`\n================ [DEBUG FETCH REQUEST] ================`);
-            console.log(`🌐 URL Target   : ${urlStr}`);
-            console.log(`📩 Method       : ${config.method || 'GET'}`);
+            console.log(`🌐 [Fetch Outgoing]: ${urlStr}`);
 
             const mergedHeaders = {
                 'User-Agent': USER_AGENT,
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
                 'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
                 'X-Requested-With': 'XMLHttpRequest',
-                'Referer': TARGET_HOST + '/',
+                'Referer': embedUrl,
                 'Origin': TARGET_HOST,
+                'Cookie': rawCookies,
                 'Sec-Fetch-Dest': 'empty',
                 'Sec-Fetch-Mode': 'cors',
                 'Sec-Fetch-Site': 'same-origin',
                 ...(config.headers || {})
             };
 
-            console.log(`🔑 Headers Sent :`, JSON.stringify(mergedHeaders, null, 2));
-
-            const response = await globalThis.fetch(urlStr, {
+            return await globalThis.fetch(urlStr, {
                 ...config,
                 headers: mergedHeaders
             });
-
-            console.log(`📊 Status Code  : ${response.status} ${response.statusText}`);
-
-            // Clone response agar tidak mengganggu proses app.js
-            try {
-                const clone = response.clone();
-                const rawText = await clone.text();
-                
-                console.log(`\n📦 --- [RAW RESPONSE BEFORE DECODE] ---`);
-                console.log(rawText);
-                console.log(`-----------------------------------------\n`);
-            } catch (err) {
-                console.error(`[Debug Log Error]: Gagal membaca raw body:`, err.message);
-            }
-
-            return response;
         };
 
-        // 7. Inject script app.js ke Virtual DOM
+        // 6. Inject & Eksekusi app.js
         const scriptEl = window.document.createElement('script');
+        scriptEl.src = `${TARGET_HOST}/app.js?v=8899`;
         scriptEl.textContent = appJsContent;
         window.document.body.appendChild(scriptEl);
 
@@ -150,17 +156,13 @@ app.get('/api/playlist', async (req, res) => {
             throw new Error('Fungsi window.getPlaylist tidak ditemukan di app.js');
         }
 
-        // 8. Eksekusi dekripsi
-        console.log(`⚙️ Menjalankan window.getPlaylist('${id}')...`);
-        const result = await window.getPlaylist(id);
-
-        console.log(`\n✅ --- [DECODED RESULT BY APP.JS] ---`);
-        console.log(JSON.stringify(result, null, 2));
-        console.log(`=======================================================\n`);
+        console.log(`⚙️ [STEP 3] Memproses window.getPlaylist('${longId}')...`);
+        const result = await window.getPlaylist(longId);
 
         return res.json({
             status: true,
-            id: id,
+            code: shortCode,
+            long_id: longId,
             data: result
         });
 
