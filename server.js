@@ -8,8 +8,9 @@ const crypto = require('node:crypto');
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-// Domain target
+// Domain target & User-Agent Konsisten
 const TARGET_HOST = 'https://pulvexa.space';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 app.use(cors());
 
@@ -41,14 +42,43 @@ app.get('/api/playlist', async (req, res) => {
 
         const { window } = dom;
 
-        // 2. Inject Web Crypto API
+        // 2. Mock Navigator agar User-Agent di dalam JS 100% SAMA dengan Header Request
+        Object.defineProperty(window, 'navigator', {
+            value: {
+                userAgent: USER_AGENT,
+                appVersion: USER_AGENT,
+                platform: 'Win32',
+                language: 'en-US',
+                languages: ['en-US', 'en'],
+                cookieEnabled: true,
+                onLine: true
+            },
+            writable: true,
+            configurable: true
+        });
+
+        // 3. Mock Objek Screen untuk kalkulasi Fingerprint/Hash
+        Object.defineProperty(window, 'screen', {
+            value: {
+                width: 1920,
+                height: 1080,
+                availWidth: 1920,
+                availHeight: 1040,
+                colorDepth: 24,
+                pixelDepth: 24
+            },
+            writable: true,
+            configurable: true
+        });
+
+        // 4. Inject Web Crypto API
         Object.defineProperty(window, 'crypto', {
             value: crypto.webcrypto || globalThis.crypto,
             configurable: true,
             writable: true
         });
 
-        // 3. Inject Polyfills
+        // 5. Inject Polyfills
         window.Headers = globalThis.Headers;
         window.Request = globalThis.Request;
         window.Response = globalThis.Response;
@@ -59,11 +89,10 @@ app.get('/api/playlist', async (req, res) => {
         window.Uint8Array = globalThis.Uint8Array;
         window.ArrayBuffer = globalThis.ArrayBuffer;
 
-        // 4. INTERCEPTOR FETCH: Lengkapi dengan Header AJAX & Logging Response
+        // 6. INTERCEPTOR FETCH: Kirim Header Konsisten
         window.fetch = async function(resource, config = {}) {
             let urlStr = typeof resource === 'string' ? resource : (resource.url || resource.href || String(resource));
 
-            // Konversi URL relatif ke absolute
             if (!urlStr.startsWith('http')) {
                 if (!urlStr.startsWith('/')) {
                     urlStr = '/' + urlStr;
@@ -73,12 +102,11 @@ app.get('/api/playlist', async (req, res) => {
 
             console.log(`[Fetch Outgoing]: ${urlStr}`);
 
-            // Header wajib agar tidak ditolak server AJAX pulvexa.space
             const mergedHeaders = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                'User-Agent': USER_AGENT,
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
                 'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
-                'X-Requested-With': 'XMLHttpRequest', // 👈 PENTING: Menandai request sebagai AJAX
+                'X-Requested-With': 'XMLHttpRequest',
                 'Referer': TARGET_HOST + '/',
                 'Origin': TARGET_HOST,
                 'Sec-Fetch-Dest': 'empty',
@@ -94,7 +122,6 @@ app.get('/api/playlist', async (req, res) => {
 
             console.log(`[Fetch Status]: ${response.status} ${response.statusText}`);
 
-            // Jika response error, cetak cuplikan isi response di log Koyeb
             if (!response.ok) {
                 const clone = response.clone();
                 const errText = await clone.text();
@@ -104,7 +131,7 @@ app.get('/api/playlist', async (req, res) => {
             return response;
         };
 
-        // 5. Inject script app.js ke Virtual DOM
+        // 7. Inject script app.js ke Virtual DOM
         const scriptEl = window.document.createElement('script');
         scriptEl.textContent = appJsContent;
         window.document.body.appendChild(scriptEl);
@@ -113,7 +140,7 @@ app.get('/api/playlist', async (req, res) => {
             throw new Error('Fungsi window.getPlaylist tidak ditemukan di app.js');
         }
 
-        // 6. Eksekusi dekripsi
+        // 8. Eksekusi dekripsi
         const result = await window.getPlaylist(id);
 
         return res.json({
