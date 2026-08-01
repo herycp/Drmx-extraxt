@@ -8,7 +8,7 @@ const crypto = require('node:crypto');
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-// Domain target terbaru
+// Domain target
 const TARGET_HOST = 'https://pulvexa.space';
 
 app.use(cors());
@@ -32,7 +32,7 @@ app.get('/api/playlist', async (req, res) => {
         }
         const appJsContent = fs.readFileSync(appJsPath, 'utf8');
 
-        // 1. Inisialisasi Virtual DOM dengan domain pulvexa.space
+        // 1. Inisialisasi Virtual DOM
         dom = new JSDOM(`<!DOCTYPE html><html><body></body></html>`, {
             runScripts: 'dangerously',
             url: TARGET_HOST,
@@ -59,36 +59,49 @@ app.get('/api/playlist', async (req, res) => {
         window.Uint8Array = globalThis.Uint8Array;
         window.ArrayBuffer = globalThis.ArrayBuffer;
 
-        // 4. INTERCEPTOR FETCH: Tempelkan domain pulvexa.space + Header Browser
+        // 4. INTERCEPTOR FETCH: Lengkapi dengan Header AJAX & Logging Response
         window.fetch = async function(resource, config = {}) {
-            let finalUrl = resource;
+            let urlStr = typeof resource === 'string' ? resource : (resource.url || resource.href || String(resource));
 
-            if (typeof resource === 'string') {
-                if (resource.startsWith('/')) {
-                    finalUrl = TARGET_HOST + resource;
-                } else if (!resource.startsWith('http')) {
-                    finalUrl = TARGET_HOST + '/' + resource;
+            // Konversi URL relatif ke absolute
+            if (!urlStr.startsWith('http')) {
+                if (!urlStr.startsWith('/')) {
+                    urlStr = '/' + urlStr;
                 }
-            } else if (resource && resource.href) {
-                if (resource.href.startsWith('about:blank') || !resource.href.startsWith('http')) {
-                    finalUrl = TARGET_HOST + resource.pathname + resource.search;
-                }
+                urlStr = TARGET_HOST + urlStr;
             }
 
-            // Custom Headers agar tidak ditolak server pulvexa.space
+            console.log(`[Fetch Outgoing]: ${urlStr}`);
+
+            // Header wajib agar tidak ditolak server AJAX pulvexa.space
             const mergedHeaders = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-                'Accept': '*/*',
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
                 'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+                'X-Requested-With': 'XMLHttpRequest', // 👈 PENTING: Menandai request sebagai AJAX
                 'Referer': TARGET_HOST + '/',
                 'Origin': TARGET_HOST,
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin',
                 ...(config.headers || {})
             };
 
-            return globalThis.fetch(finalUrl, {
+            const response = await globalThis.fetch(urlStr, {
                 ...config,
                 headers: mergedHeaders
             });
+
+            console.log(`[Fetch Status]: ${response.status} ${response.statusText}`);
+
+            // Jika response error, cetak cuplikan isi response di log Koyeb
+            if (!response.ok) {
+                const clone = response.clone();
+                const errText = await clone.text();
+                console.error(`[Fetch Error Detail]:`, errText.substring(0, 300));
+            }
+
+            return response;
         };
 
         // 5. Inject script app.js ke Virtual DOM
@@ -100,7 +113,7 @@ app.get('/api/playlist', async (req, res) => {
             throw new Error('Fungsi window.getPlaylist tidak ditemukan di app.js');
         }
 
-        // 6. Eksekusi fungsi getPlaylist
+        // 6. Eksekusi dekripsi
         const result = await window.getPlaylist(id);
 
         return res.json({
