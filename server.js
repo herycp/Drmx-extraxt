@@ -27,7 +27,7 @@ app.get('/api/playlist', async (req, res) => {
     let dom = null;
 
     try {
-        const appJsPath = path.join(__dirname, 'app.js');
+        const appJsPath = path.join(__dirname, 'app.js?v=8899');
         if (!fs.existsSync(appJsPath)) {
             throw new Error('File app.js tidak ditemukan di server.');
         }
