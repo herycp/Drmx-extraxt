@@ -3,7 +3,7 @@ const cors = require('cors');
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('node:crypto'); // 👈 Tambahkan require crypto bawaan Node.js
+const crypto = require('node:crypto');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -29,23 +29,33 @@ app.get('/api/playlist', async (req, res) => {
         }
         const appJsContent = fs.readFileSync(appJsPath, 'utf8');
 
-        // 1. Inisialisasi Virtual DOM
+        // 1. Inisialisasi Virtual DOM dengan pretendToBeVisual agar simulasi browser lebih akurat
         dom = new JSDOM(`<!DOCTYPE html><html><body></body></html>`, {
             runScripts: 'dangerously',
-            url: 'https://dremoxa.site'
+            url: 'https://dremoxa.site',
+            pretendToBeVisual: true
         });
 
         const { window } = dom;
 
-        // 2. PASTI-KAN Web Crypto API (termasuk .subtle.digest) terpasang sempurna
+        // 2. Inject Web Crypto API
         Object.defineProperty(window, 'crypto', {
             value: crypto.webcrypto || globalThis.crypto,
             configurable: true,
             writable: true
         });
 
-        // 3. Pasang juga fetch bawaan Node ke dalam window JSDOM
+        // 3. Inject Polyfill Web APIs & Constructors standar ke window JSDOM
         window.fetch = globalThis.fetch;
+        window.Headers = globalThis.Headers;
+        window.Request = globalThis.Request;
+        window.Response = globalThis.Response;
+        window.TextEncoder = globalThis.TextEncoder;
+        window.TextDecoder = globalThis.TextDecoder;
+        window.URL = globalThis.URL;
+        window.URLSearchParams = globalThis.URLSearchParams;
+        window.Uint8Array = globalThis.Uint8Array;
+        window.ArrayBuffer = globalThis.ArrayBuffer;
 
         // 4. Inject script app.js ke Virtual DOM
         const scriptEl = window.document.createElement('script');
