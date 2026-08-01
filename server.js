@@ -42,7 +42,7 @@ app.get('/api/playlist', async (req, res) => {
 
         const { window } = dom;
 
-        // 2. Mock Navigator agar User-Agent di dalam JS 100% SAMA dengan Header Request
+        // 2. Mock Navigator
         Object.defineProperty(window, 'navigator', {
             value: {
                 userAgent: USER_AGENT,
@@ -57,7 +57,7 @@ app.get('/api/playlist', async (req, res) => {
             configurable: true
         });
 
-        // 3. Mock Objek Screen untuk kalkulasi Fingerprint/Hash
+        // 3. Mock Screen
         Object.defineProperty(window, 'screen', {
             value: {
                 width: 1920,
@@ -89,7 +89,7 @@ app.get('/api/playlist', async (req, res) => {
         window.Uint8Array = globalThis.Uint8Array;
         window.ArrayBuffer = globalThis.ArrayBuffer;
 
-        // 6. INTERCEPTOR FETCH: Kirim Header Konsisten
+        // 6. INTERCEPTOR FETCH DENGAN DEBUG LOGGING MENDETAIL
         window.fetch = async function(resource, config = {}) {
             let urlStr = typeof resource === 'string' ? resource : (resource.url || resource.href || String(resource));
 
@@ -100,7 +100,9 @@ app.get('/api/playlist', async (req, res) => {
                 urlStr = TARGET_HOST + urlStr;
             }
 
-            console.log(`[Fetch Outgoing]: ${urlStr}`);
+            console.log(`\n================ [DEBUG FETCH REQUEST] ================`);
+            console.log(`🌐 URL Target   : ${urlStr}`);
+            console.log(`📩 Method       : ${config.method || 'GET'}`);
 
             const mergedHeaders = {
                 'User-Agent': USER_AGENT,
@@ -115,17 +117,25 @@ app.get('/api/playlist', async (req, res) => {
                 ...(config.headers || {})
             };
 
+            console.log(`🔑 Headers Sent :`, JSON.stringify(mergedHeaders, null, 2));
+
             const response = await globalThis.fetch(urlStr, {
                 ...config,
                 headers: mergedHeaders
             });
 
-            console.log(`[Fetch Status]: ${response.status} ${response.statusText}`);
+            console.log(`📊 Status Code  : ${response.status} ${response.statusText}`);
 
-            if (!response.ok) {
+            // Clone response agar tidak mengganggu proses app.js
+            try {
                 const clone = response.clone();
-                const errText = await clone.text();
-                console.error(`[Fetch Error Detail]:`, errText.substring(0, 300));
+                const rawText = await clone.text();
+                
+                console.log(`\n📦 --- [RAW RESPONSE BEFORE DECODE] ---`);
+                console.log(rawText);
+                console.log(`-----------------------------------------\n`);
+            } catch (err) {
+                console.error(`[Debug Log Error]: Gagal membaca raw body:`, err.message);
             }
 
             return response;
@@ -141,7 +151,12 @@ app.get('/api/playlist', async (req, res) => {
         }
 
         // 8. Eksekusi dekripsi
+        console.log(`⚙️ Menjalankan window.getPlaylist('${id}')...`);
         const result = await window.getPlaylist(id);
+
+        console.log(`\n✅ --- [DECODED RESULT BY APP.JS] ---`);
+        console.log(JSON.stringify(result, null, 2));
+        console.log(`=======================================================\n`);
 
         return res.json({
             status: true,
