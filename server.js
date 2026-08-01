@@ -7,7 +7,9 @@ const crypto = require('node:crypto');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
-const TARGET_HOST = 'https://dremoxa.site';
+
+// Domain target terbaru
+const TARGET_HOST = 'https://pulvexa.space';
 
 app.use(cors());
 
@@ -30,7 +32,7 @@ app.get('/api/playlist', async (req, res) => {
         }
         const appJsContent = fs.readFileSync(appJsPath, 'utf8');
 
-        // 1. Inisialisasi Virtual DOM
+        // 1. Inisialisasi Virtual DOM dengan domain pulvexa.space
         dom = new JSDOM(`<!DOCTYPE html><html><body></body></html>`, {
             runScripts: 'dangerously',
             url: TARGET_HOST,
@@ -46,7 +48,7 @@ app.get('/api/playlist', async (req, res) => {
             writable: true
         });
 
-        // 3. Inject Polyfill & Web APIs
+        // 3. Inject Polyfills
         window.Headers = globalThis.Headers;
         window.Request = globalThis.Request;
         window.Response = globalThis.Response;
@@ -57,8 +59,8 @@ app.get('/api/playlist', async (req, res) => {
         window.Uint8Array = globalThis.Uint8Array;
         window.ArrayBuffer = globalThis.ArrayBuffer;
 
-        // 4. INTERCEPTOR FETCH: Belokkan URL Relatif ke Absolute Target Host
-        window.fetch = async function(resource, config) {
+        // 4. INTERCEPTOR FETCH: Tempelkan domain pulvexa.space + Header Browser
+        window.fetch = async function(resource, config = {}) {
             let finalUrl = resource;
 
             if (typeof resource === 'string') {
@@ -73,8 +75,20 @@ app.get('/api/playlist', async (req, res) => {
                 }
             }
 
-            // Jalankan native Node fetch dengan URL absolute
-            return globalThis.fetch(finalUrl, config);
+            // Custom Headers agar tidak ditolak server pulvexa.space
+            const mergedHeaders = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+                'Referer': TARGET_HOST + '/',
+                'Origin': TARGET_HOST,
+                ...(config.headers || {})
+            };
+
+            return globalThis.fetch(finalUrl, {
+                ...config,
+                headers: mergedHeaders
+            });
         };
 
         // 5. Inject script app.js ke Virtual DOM
@@ -86,7 +100,7 @@ app.get('/api/playlist', async (req, res) => {
             throw new Error('Fungsi window.getPlaylist tidak ditemukan di app.js');
         }
 
-        // 6. Eksekusi dekripsi
+        // 6. Eksekusi fungsi getPlaylist
         const result = await window.getPlaylist(id);
 
         return res.json({
