@@ -15,6 +15,7 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 app.use(cors());
 
 app.get('/api/playlist', async (req, res) => {
+    // Terima parameter kode pendek (contoh: ?id=ZReJmz7rUX)
     const { id: shortCode } = req.query;
 
     if (!shortCode) {
@@ -37,7 +38,7 @@ app.get('/api/playlist', async (req, res) => {
         const embedUrl = `${TARGET_HOST}/embed/${shortCode}?token=${FIXED_TOKEN}`;
         console.log(`\n🔍 [STEP 1] Rekonstruksi Full Embed URL: ${embedUrl}`);
 
-        // 2. Download HTML Halaman Embed
+        // 2. Download HTML Halaman Embed untuk Mendapatkan ID Panjang & Cookie
         const pageResponse = await globalThis.fetch(embedUrl, {
             headers: {
                 'User-Agent': USER_AGENT,
@@ -53,22 +54,26 @@ app.get('/api/playlist', async (req, res) => {
 
         const rawHtml = await pageResponse.text();
 
+        // Tangkap Cookie Session dari response
         const rawCookies = pageResponse.headers.getSetCookie 
             ? pageResponse.headers.getSetCookie().join('; ') 
             : (pageResponse.headers.get('set-cookie') || '');
 
-        // 3. Ekstraksi ID Panjang langsung dari pemanggilan getPlaylist(...)
+        // 3. Ekstraksi ID Panjang Langsung dari Pemanggilan getPlaylist(...)
         const match = rawHtml.match(/getPlaylist\(\s*[`'"]([a-f0-9]{32})[`'"]\s*\)/i);
         const longId = match ? match[1] : null;
 
         if (!longId) {
-            throw new Error('Gagal menemukan ID video panjang pada pemanggilan getPlaylist()');
+            throw new Error('Gagal menemukan ID video panjang pada pemanggilan getPlaylist() di HTML embed.');
         }
 
         console.log(`🔑 [STEP 2] ID Video Panjang Ditemukan: ${longId}`);
 
-        // 4. Inisialisasi JSDOM
-        dom = new JSDOM(rawHtml, {
+        // 4. Bersihkan Tag <script> Bawaan HTML Agar Tidak Memicu Reload / Alert
+        const cleanHtml = rawHtml.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+
+        // 5. Inisialisasi JSDOM
+        dom = new JSDOM(cleanHtml, {
             runScripts: 'dangerously',
             url: embedUrl,
             pretendToBeVisual: true
@@ -76,7 +81,13 @@ app.get('/api/playlist', async (req, res) => {
 
         const { window } = dom;
 
-        // Mock Environment
+        // Mocking Fungsi Pengganggu Bawaan Browser
+        window.alert = () => {};
+        if (window.location) {
+            window.location.reload = () => {};
+        }
+
+        // Mocking Environment Navigator & Screen
         Object.defineProperty(window, 'navigator', {
             value: {
                 userAgent: USER_AGENT,
@@ -103,6 +114,7 @@ app.get('/api/playlist', async (req, res) => {
             writable: true
         });
 
+        // Inject Web Polyfills
         window.Headers = globalThis.Headers;
         window.Request = globalThis.Request;
         window.Response = globalThis.Response;
@@ -113,7 +125,7 @@ app.get('/api/playlist', async (req, res) => {
         window.Uint8Array = globalThis.Uint8Array;
         window.ArrayBuffer = globalThis.ArrayBuffer;
 
-        // 5. Interceptor Fetch dengan Referer Full Embed URL
+        // 6. Interceptor Fetch dengan Referer FULL EMBED URL & Cookie
         window.fetch = async function(resource, config = {}) {
             let urlStr = typeof resource === 'string' ? resource : (resource.url || resource.href || String(resource));
 
@@ -131,7 +143,7 @@ app.get('/api/playlist', async (req, res) => {
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
                 'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
                 'X-Requested-With': 'XMLHttpRequest',
-                'Referer': embedUrl,
+                'Referer': embedUrl, // Referer resmi hasil rekonstruksi
                 'Origin': TARGET_HOST,
                 'Cookie': rawCookies,
                 'Sec-Fetch-Dest': 'empty',
@@ -146,7 +158,7 @@ app.get('/api/playlist', async (req, res) => {
             });
         };
 
-        // 6. Inject & Eksekusi app.js
+        // 7. Inject & Eksekusi app.js
         const scriptEl = window.document.createElement('script');
         scriptEl.src = `${TARGET_HOST}/app.js?v=8899`;
         scriptEl.textContent = appJsContent;
