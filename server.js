@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
+const TARGET_HOST = 'https://dremoxa.site';
 
 app.use(cors());
 
@@ -29,10 +30,10 @@ app.get('/api/playlist', async (req, res) => {
         }
         const appJsContent = fs.readFileSync(appJsPath, 'utf8');
 
-        // 1. Inisialisasi Virtual DOM dengan pretendToBeVisual agar simulasi browser lebih akurat
+        // 1. Inisialisasi Virtual DOM
         dom = new JSDOM(`<!DOCTYPE html><html><body></body></html>`, {
             runScripts: 'dangerously',
-            url: 'https://dremoxa.site',
+            url: TARGET_HOST,
             pretendToBeVisual: true
         });
 
@@ -45,8 +46,7 @@ app.get('/api/playlist', async (req, res) => {
             writable: true
         });
 
-        // 3. Inject Polyfill Web APIs & Constructors standar ke window JSDOM
-        window.fetch = globalThis.fetch;
+        // 3. Inject Polyfill & Web APIs
         window.Headers = globalThis.Headers;
         window.Request = globalThis.Request;
         window.Response = globalThis.Response;
@@ -57,7 +57,27 @@ app.get('/api/playlist', async (req, res) => {
         window.Uint8Array = globalThis.Uint8Array;
         window.ArrayBuffer = globalThis.ArrayBuffer;
 
-        // 4. Inject script app.js ke Virtual DOM
+        // 4. INTERCEPTOR FETCH: Belokkan URL Relatif ke Absolute Target Host
+        window.fetch = async function(resource, config) {
+            let finalUrl = resource;
+
+            if (typeof resource === 'string') {
+                if (resource.startsWith('/')) {
+                    finalUrl = TARGET_HOST + resource;
+                } else if (!resource.startsWith('http')) {
+                    finalUrl = TARGET_HOST + '/' + resource;
+                }
+            } else if (resource && resource.href) {
+                if (resource.href.startsWith('about:blank') || !resource.href.startsWith('http')) {
+                    finalUrl = TARGET_HOST + resource.pathname + resource.search;
+                }
+            }
+
+            // Jalankan native Node fetch dengan URL absolute
+            return globalThis.fetch(finalUrl, config);
+        };
+
+        // 5. Inject script app.js ke Virtual DOM
         const scriptEl = window.document.createElement('script');
         scriptEl.textContent = appJsContent;
         window.document.body.appendChild(scriptEl);
@@ -66,7 +86,7 @@ app.get('/api/playlist', async (req, res) => {
             throw new Error('Fungsi window.getPlaylist tidak ditemukan di app.js');
         }
 
-        // 5. Eksekusi dekripsi
+        // 6. Eksekusi dekripsi
         const result = await window.getPlaylist(id);
 
         return res.json({
