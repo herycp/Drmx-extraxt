@@ -29,6 +29,16 @@ function convertM3u8ToAbsolute(m3u8Text, baseUrlStr) {
     }).join('\n');
 }
 
+// 🏥 Health Check Endpoint (Dipakai Koyeb Health Check / Ping UptimeRobot)
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        message: 'Instance is healthy',
+        uptime: `${Math.floor(process.uptime())}s`,
+        timestamp: new Date().toISOString()
+    });
+});
+
 app.get('/api/playlist', async (req, res) => {
     const { id: shortCode } = req.query;
     
