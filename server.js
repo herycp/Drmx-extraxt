@@ -20,10 +20,8 @@ function convertM3u8ToAbsolute(m3u8Text, baseUrlStr) {
     const baseUrl = new URL(baseUrlStr);
     return m3u8Text.split('\n').map(line => {
         const trimmed = line.trim();
-        // Skip baris kosong atau tag metadata M3U8 (#EXTINF, #EXT-X-..., dll)
         if (!trimmed || trimmed.startsWith('#')) return line;
         try {
-            // Ubah link relatif segmen (.ts / .m3u8 child) menjadi URL absolut
             return new URL(trimmed, baseUrl.href).href;
         } catch (e) {
             return line;
@@ -33,8 +31,17 @@ function convertM3u8ToAbsolute(m3u8Text, baseUrlStr) {
 
 app.get('/api/playlist', async (req, res) => {
     const { id: shortCode } = req.query;
+    
+    // Generate Request ID Unik untuk Tracing Log
+    const requestId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const logPrefix = `[REQ-${requestId}]`;
+
+    console.log(`\n==================================================`);
+    console.log(`${logPrefix} 🚀 Request Playlist Baru | ID Video: ${shortCode}`);
+    console.log(`==================================================`);
 
     if (!shortCode) {
+        console.error(`${logPrefix} ❌ Validation Error: Parameter ?id= kosong.`);
         return res.status(400).json({ 
             status: false, 
             message: 'Parameter ?id= (kode video) wajib diisi' 
@@ -52,9 +59,10 @@ app.get('/api/playlist', async (req, res) => {
 
         // 1. Rekonstruksi Full Embed URL
         const embedUrl = `${TARGET_HOST}/embed/${shortCode}?token=${FIXED_TOKEN}`;
-        console.log(`\n🔍 [STEP 1] Rekonstruksi Full Embed URL: ${embedUrl}`);
+        console.log(`${logPrefix} 🔍 [STEP 1] Embed URL: ${embedUrl}`);
 
-        // 2. Download HTML Halaman Embed untuk Mendapatkan ID Panjang & Cookie
+        // 2. Fetch Embed HTML Page
+        console.log(`${logPrefix} 📡 [STEP 2] Mengambil HTML halaman embed...`);
         const pageResponse = await globalThis.fetch(embedUrl, {
             headers: {
                 'User-Agent': USER_AGENT,
@@ -64,30 +72,39 @@ app.get('/api/playlist', async (req, res) => {
             }
         });
 
+        console.log(`${logPrefix} 📊 [STEP 2 Status]: ${pageResponse.status} ${pageResponse.statusText}`);
+
         if (!pageResponse.ok) {
-            throw new Error(`Gagal mengambil halaman embed. Status: ${pageResponse.status}`);
+            const errBody = await pageResponse.text();
+            console.error(`${logPrefix} ❌ [STEP 2 Error Body Preview]: ${errBody.substring(0, 300)}`);
+            throw new Error(`Gagal mengambil halaman embed. Status HTTP: ${pageResponse.status}`);
         }
 
         const rawHtml = await pageResponse.text();
+        console.log(`${logPrefix} 📄 [STEP 2 Info] Ukuran HTML: ${rawHtml.length} bytes`);
 
         const rawCookies = pageResponse.headers.getSetCookie 
             ? pageResponse.headers.getSetCookie().join('; ') 
             : (pageResponse.headers.get('set-cookie') || '');
+        console.log(`${logPrefix} 🍪 [STEP 2 Cookie]: ${rawCookies || '(Kosong / Tidak ada cookie)'}`);
 
-        // 3. Ekstraksi ID Panjang Langsung dari Pemanggilan getPlaylist(...)
+        // 3. Ekstraksi ID Panjang
         const match = rawHtml.match(/getPlaylist\(\s*[`'"]([a-f0-9]{32})[`'"]\s*\)/i);
         const longId = match ? match[1] : null;
 
         if (!longId) {
+            console.error(`${logPrefix} ❌ [STEP 3 Match Fail] Regex getPlaylist() tidak cocok dengan HTML.`);
+            console.error(`${logPrefix} 📝 HTML Preview (500 karakter pertama):\n${rawHtml.substring(0, 500)}`);
             throw new Error('Gagal menemukan ID video panjang pada pemanggilan getPlaylist() di HTML embed.');
         }
 
-        console.log(`🔑 [STEP 2] ID Video Panjang Ditemukan: ${longId}`);
+        console.log(`${logPrefix} 🔑 [STEP 3] ID Panjang Ditemukan: ${longId}`);
 
-        // 4. Bersihkan Tag <script> Bawaan HTML
+        // 4. Clean Script Tags
         const cleanHtml = rawHtml.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
 
         // 5. Inisialisasi JSDOM
+        console.log(`${logPrefix} 🖥️ [STEP 4] Membuat Virtual JSDOM Environment...`);
         dom = new JSDOM(cleanHtml, {
             runScripts: 'dangerously',
             url: embedUrl,
@@ -96,13 +113,11 @@ app.get('/api/playlist', async (req, res) => {
 
         const { window } = dom;
 
-        // Mocking Fungsi Browser
         window.alert = () => {};
         if (window.location) {
             window.location.reload = () => {};
         }
 
-        // Mocking Environment Navigator & Screen
         Object.defineProperty(window, 'navigator', {
             value: {
                 userAgent: USER_AGENT,
@@ -129,7 +144,6 @@ app.get('/api/playlist', async (req, res) => {
             writable: true
         });
 
-        // Inject Polyfills
         window.Headers = globalThis.Headers;
         window.Request = globalThis.Request;
         window.Response = globalThis.Response;
@@ -140,7 +154,7 @@ app.get('/api/playlist', async (req, res) => {
         window.Uint8Array = globalThis.Uint8Array;
         window.ArrayBuffer = globalThis.ArrayBuffer;
 
-        // 6. Interceptor Fetch
+        // 6. Interceptor Fetch dengan Log Detail Request & Response Body
         window.fetch = async function(resource, config = {}) {
             let urlStr = typeof resource === 'string' ? resource : (resource.url || resource.href || String(resource));
 
@@ -151,7 +165,7 @@ app.get('/api/playlist', async (req, res) => {
                 urlStr = TARGET_HOST + urlStr;
             }
 
-            console.log(`🌐 [Fetch Outgoing]: ${urlStr}`);
+            console.log(`${logPrefix} 🌐 [JSDOM Fetch Outgoing]: ${config.method || 'GET'} -> ${urlStr}`);
 
             const mergedHeaders = {
                 'User-Agent': USER_AGENT,
@@ -167,37 +181,65 @@ app.get('/api/playlist', async (req, res) => {
                 ...(config.headers || {})
             };
 
-            return await globalThis.fetch(urlStr, {
-                ...config,
-                headers: mergedHeaders
-            });
+            try {
+                const resp = await globalThis.fetch(urlStr, {
+                    ...config,
+                    headers: mergedHeaders
+                });
+
+                // Clone response untuk melihat isi respons tanpa merusak stream asli JSDOM
+                const clonedResp = resp.clone();
+                const textData = await clonedResp.text();
+
+                console.log(`${logPrefix} 📥 [JSDOM Fetch Response]: Status ${resp.status} | Body Length: ${textData.length}`);
+                console.log(`${logPrefix} 📦 [JSDOM Fetch Body Preview]: ${textData.substring(0, 300)}`);
+
+                return resp;
+            } catch (fetchErr) {
+                console.error(`${logPrefix} 💥 [JSDOM Fetch Error]: ${fetchErr.message}`);
+                throw fetchErr;
+            }
         };
 
         // 7. Eksekusi app.js
+        console.log(`${logPrefix} ⚙️ [STEP 5] Mengeksekusi app.js di dalam JSDOM...`);
         window.eval(appJsContent);
 
         if (typeof window.getPlaylist !== 'function') {
             throw new Error('Fungsi window.getPlaylist tidak ditemukan setelah mengeksekusi app.js.');
         }
 
-        console.log(`⚙️ [STEP 3] Memproses window.getPlaylist('${longId}')...`);
-        const result = await window.getPlaylist(longId);
+        console.log(`${logPrefix} ⚙️ [STEP 6] Memanggil window.getPlaylist('${longId}')...`);
+        
+        let result;
+        try {
+            result = await window.getPlaylist(longId);
+        } catch (evalErr) {
+            console.error(`${logPrefix} 💥 [getPlaylist Execution Error]:`, evalErr);
+            throw evalErr;
+        }
 
-        // 8. Ekstraksi Target URL M3U8 dari Hasil getPlaylist
+        // 🔬 LOGGING MURNI/RAW HASIL DARI getPlaylist
+        console.log(`${logPrefix} 🔬 [DEBUG HASIL getPlaylist] Typeof: ${typeof result}`);
+        console.log(`${logPrefix} 🔬 [RAW RESULT DUMP]:`, JSON.stringify(result, null, 2) || String(result));
+
+        // 8. Ekstraksi Target URL M3U8
         let m3u8TargetUrl = null;
         if (typeof result === 'string') {
             m3u8TargetUrl = result;
         } else if (result && typeof result === 'object') {
-            m3u8TargetUrl = result.file || result.url || result.playlist || (Array.isArray(result) && result[0]?.file);
+            m3u8TargetUrl = result.file || result.url || result.playlist || (Array.isArray(result) && (result[0]?.file || result[0]?.url));
         }
 
         if (!m3u8TargetUrl) {
-            throw new Error('Gagal mengekstrak URL M3U8 dari hasil window.getPlaylist()');
+            console.error(`${logPrefix} ❌ [Ekstraksi Gagal] Hasil dari getPlaylist tidak memiliki property URL valid.`);
+            throw new Error(`Gagal mengekstrak URL M3U8. Data yang diterima: ${JSON.stringify(result)}`);
         }
 
-        console.log(`📥 [STEP 4] Mengunduh isi playlist M3U8 dari: ${m3u8TargetUrl}`);
+        console.log(`${logPrefix} 🎯 [STEP 7] URL M3U8 Berhasil Diekstrak: ${m3u8TargetUrl}`);
 
-        // 9. Fetch File M3U8 Asli dengan Header Bypass
+        // 9. Fetch File M3U8 Asli
+        console.log(`${logPrefix} 📥 [STEP 8] Mengunduh file M3U8 asli...`);
         const m3u8Response = await globalThis.fetch(m3u8TargetUrl, {
             headers: {
                 'User-Agent': USER_AGENT,
@@ -208,18 +250,21 @@ app.get('/api/playlist', async (req, res) => {
             }
         });
 
+        console.log(`${logPrefix} 📊 [STEP 8 Status]: ${m3u8Response.status} ${m3u8Response.statusText}`);
+
         if (!m3u8Response.ok) {
+            const errText = await m3u8Response.text();
+            console.error(`${logPrefix} ❌ [STEP 8 Error Body]: ${errText.substring(0, 300)}`);
             throw new Error(`Gagal mengunduh file M3U8. Status HTTP: ${m3u8Response.status}`);
         }
 
         const rawM3u8Text = await m3u8Response.text();
+        console.log(`${logPrefix} 📜 [STEP 8 Preview M3U8] (200 Karakter Pertama):\n${rawM3u8Text.substring(0, 200)}`);
 
-        // 10. Modifikasi URL Relatif Menjadi Absolut
+        // 10. Modifikasi URL Relatif ke Absolut
         const modifiedM3u8 = convertM3u8ToAbsolute(rawM3u8Text, m3u8TargetUrl);
+        console.log(`${logPrefix} ✅ [STEP 9] Selesai! Mengirimkan M3U8 modifikasi ke user.`);
 
-        console.log(`✅ [STEP 5] M3U8 berhasil dimodifikasi. Mengirim respons ke user...`);
-
-        // 11. Kirimkan Hasil M3U8 dengan Header Stream HLS
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
         res.setHeader('Content-Disposition', `inline; filename="${shortCode}.m3u8"`);
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -228,7 +273,12 @@ app.get('/api/playlist', async (req, res) => {
         return res.status(200).send(modifiedM3u8);
 
     } catch (error) {
-        console.error('[API ERROR]:', error.message);
+        console.error(`\n==================================================`);
+        console.error(`${logPrefix} 💥 [API ERROR EXCEPTION]`);
+        console.error(`${logPrefix} Message: ${error.message}`);
+        console.error(`${logPrefix} Stack Trace:\n`, error.stack);
+        console.error(`==================================================\n`);
+
         return res.status(500).json({
             status: false,
             message: 'Gagal memproses playlist',
