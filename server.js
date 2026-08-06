@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 8000;
 
 // 🌐 Konfigurasi Target Domain
-const TARGET_HOST = 'https://pulvexa.space';
+const TARGET_HOST = 'https://norqeli.space';
 const FIXED_TOKEN = '5dfbc9b04e576fc6ad1dbe1daf7a';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
