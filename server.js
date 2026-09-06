@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 8000;
 
 // 🌐 Konfigurasi Target Domain
-const TARGET_HOST = 'https://korxime.guru';
+const TARGET_HOST = 'https://yundevo.guru';
 const FIXED_TOKEN = 'b8e7277e57d09b21cc66ab3e2977';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
